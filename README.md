@@ -11,7 +11,7 @@ Thermal images reveal medically important physiological information about human 
 
 ## Install
 
-`git clone git@github.com:nudro/favtgan.git`
+`git@github.com:umbc-sanjaylab/favtGAN.git`
 
 `pip install requirements.txt`
 
