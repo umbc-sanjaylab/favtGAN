@@ -33,7 +33,7 @@ The Iris and the Oklahoma State University (OSU) datasets are publicly available
 - OSU: http://vcipl-okstate.org/pbvs/bench/Data/01/download.html. We use the "1a" and "1b" sets.
 
 Because they are publicly available, we have provided the paired visible-thermal datasets here which include Iris only, Iris + OSU, and OSU only.
-- Link here: https://umbc.box.com/s/m3x7gm67wtw4nhk9qlxv1j3jq93lb0us (download only)
+- Link here: https://umbc.box.com/s/m3x7gm67wtw4nhk9qlxv1j3jq93lb0us (download only) 
 - There is only a train and test set, no validation.
 
 ### Eurecom and FLIR ADAS
