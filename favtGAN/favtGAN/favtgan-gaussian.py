@@ -1,24 +1,15 @@
 import argparse
 import os
 import numpy as np
-import math
-import itertools
 import time
 import datetime
 import sys
-
-
 import torchvision.transforms as transforms
 from torchvision.utils import save_image
-
 from torch.utils.data import DataLoader
 from torchvision import datasets
 from torch.autograd import Variable
-
-# from models import *
 from datasets import *
-
-
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
@@ -50,8 +41,8 @@ parser.add_argument("--lambda_adv", type=float, default=0.2, help="adversarial s
 opt = parser.parse_args()
 print(opt)
 
-os.makedirs("experiments/pix2pix_mods_label_loss/images/%s" % opt.experiment, exist_ok=True)
-os.makedirs("experiments/pix2pix_mods_label_loss/saved_models/%s" % opt.experiment, exist_ok=True)
+os.makedirs("favtGAN/images/%s" % opt.experiment, exist_ok=True)
+os.makedirs("favtGAN/saved_models/%s" % opt.experiment, exist_ok=True)
 
 cuda = True if torch.cuda.is_available() else False
 torch.cuda.set_device(opt.gpu_num)
@@ -60,18 +51,12 @@ torch.cuda.set_device(opt.gpu_num)
 criterion_GAN = torch.nn.MSELoss()
 criterion_pixelwise = torch.nn.L1Loss()
 auxiliary_loss = torch.nn.CrossEntropyLoss()
-
-# Loss weight of L1 pixel-wise loss between translated image and real image
 lambda_pixel = 100
 lambda_adv = opt.lambda_adv
 
 # Calculate output of image discriminator (PatchGAN)
 patch = (1, opt.img_height // 2 ** 4, opt.img_width // 2 ** 4)
-print("patch:", patch)
 
-
-# ===========================================================
-# i copied from models.py directly here
 
 def weights_init_normal(m):
     classname = m.__class__.__name__
@@ -99,8 +84,6 @@ class UNetDown(nn.Module):
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
-        #print("UNetDown x.shape", x.size())
-        # print("UNetDown x is:", x)
         return self.model(x)
 
 
@@ -118,31 +101,17 @@ class UNetUp(nn.Module):
         self.model = nn.Sequential(*layers)
 
     def forward(self, x, skip_input):
-        # print("UNetUp x input to forward is:", x.size())
         x = self.model(x)
-        # print("UnetUp x = self.model(x) is:", x.size())
         x = torch.cat((x, skip_input), 1)
-        # print("UNetUp x after torch.cat:", x.size())
-
         return x
 
 
 class GeneratorUNet(nn.Module):
     def __init__(self, img_shape):
         super(GeneratorUNet, self).__init__()
-
-        # self.label_emb = nn.Embedding(opt.n_classes, opt.n_classes)
-        # try the below from bicyclegan
-
         channels, self.h, self.w = img_shape
-
-        # this is to make the mul math work out
-        # so that [batch x 1] x [1, 256*256]  = [batch, 256*256] => .view as 4D
-
         allowable_labels_per_batch = 1
         self.fc = nn.Linear(allowable_labels_per_batch, self.h * self.w) # [1, 256*256]
-
-        #self.down1 = UNetDown((channels + 1 + opt.latent_dim), 64, normalize=False)
         self.down1 = UNetDown((channels + 4), 64, normalize=False) # channels(3) + labels (1) + noise (3)
         self.down2 = UNetDown(64, 128)
         self.down3 = UNetDown(128, 256)
@@ -167,14 +136,7 @@ class GeneratorUNet(nn.Module):
         )
 
     def forward(self, x, labels, z):
-        # U-Net generator with skip connections from encoder to decoder
-
-        print("real_A shape into gen is:", x.size()) #[12, 3, 256, 256]
-        print("labels into gen is:", labels.size()) #[12, 1]
-        print("noise", z.shape) #torch.Size([12, 3, 256, 256])
-        # below is what makes it 4D for UNET
-
-        labels = self.fc(labels).view(labels.size(0), 1, self.h, self.w) #[12, 1, 256, 256] - 1 label per batch
+        labels = self.fc(labels).view(labels.size(0), 1, self.h, self.w) #[batch_size, 1, 256, 256] - 1 label per batch
 
         d1 = self.down1(torch.cat((x, labels, z), 1))
         d2 = self.down2(d1)
@@ -191,8 +153,6 @@ class GeneratorUNet(nn.Module):
         u5 = self.up5(u4, d3)
         u6 = self.up6(u5, d2)
         u7 = self.up7(u6, d1)
-
-        # print("self.final(u7).shape:", self.final(u7).size())
         return self.final(u7)
 
 
@@ -206,16 +166,8 @@ class Discriminator(nn.Module):
         super(Discriminator, self).__init__()
 
         channels, self.h, self.w = img_shape
-        print("channels to D:", channels)  # 3
-        print("self.h to D:", self.h)  # 256
-        print("self.w to D:", self.w)  # 256
-
-        # self.label_emb = nn.Embedding(opt.n_classes, opt.n_classes)
-        #allowable_labels_per_batch = 1
-        #self.fc = nn.Linear(allowable_labels_per_batch, self.h * self.w)
 
         def discriminator_block(in_filters, out_filters, normalization=True):
-            """Returns downsampling layers of each discriminator block"""
             layers = [nn.Conv2d(in_filters, out_filters, 4, stride=2, padding=1)]
 
             if normalization:
@@ -232,42 +184,20 @@ class Discriminator(nn.Module):
             nn.Conv2d(512, 1, 4, padding=1, bias=False)
         )
 
-        # The height and width of downsampled image
-        #img_size = self.h
-        #ds_size = img_size // 2 ** 4
-        # out for labels aux layer: torch.Size([12, 458752])
         self.aux_layer = nn.Sequential(nn.Linear((channels * 2) * self.h * self.w, opt.n_classes), nn.Softmax())
 
 
-    # def forward(self, img_A, img_B):
     def forward(self, img_A, img_B):
-        # Concatenate image and condition image by channels to produce input
-
-        # images
-        img_input = torch.cat((img_A, img_B), 1)
-        print("img_input to forward D:", img_input.size()) # torch.Size([2, 6, 256, 256])
-
+        img_input = torch.cat((img_A, img_B), 1) # torch.Size([batch_size, 6, 256, 256])
         d_in = img_input
-        print("d_in.shape:", d_in.shape)  # must return 4d
-        print("self.model(d_in) prediction:", self.model(d_in).size())
-
         output = self.model(d_in)
-        print("discriminator output:", output.size())
-
         out = d_in.view(d_in.shape[0], -1) #batch_size, cols
         label = self.aux_layer(out)
-        print("label from label = self.aux_layer(out):", label)
-        # print("===next===")
-
         return output, label
-
-
 
 # ===========================================================
 # Initialize generator and discriminator
 input_shape = (opt.channels, opt.img_height, opt.img_width)
-
-
 generator = GeneratorUNet(input_shape)
 discriminator = Discriminator(input_shape)
 
@@ -280,8 +210,8 @@ if cuda:
 
 if opt.epoch != 0:
     # Load pretrained models
-    generator.load_state_dict(torch.load("experiments/pix2pix_mods_label_loss/saved_models/%s/generator_%d.pth" % (opt.experiment, opt.epoch)))
-    discriminator.load_state_dict(torch.load("experiments/pix2pix_mods_label_loss/saved_models/%s/discriminator_%d.pth" % (opt.experiment, opt.epoch)))
+    generator.load_state_dict(torch.load("favtGAN/saved_models/%s/generator_%d.pth" % (opt.experiment, opt.epoch)))
+    discriminator.load_state_dict(torch.load("favtGAN/saved_models/%s/discriminator_%d.pth" % (opt.experiment, opt.epoch)))
 else:
     # Initialize weights
     generator.apply(weights_init_normal)
@@ -298,13 +228,8 @@ transforms_ = [
     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
 ]
 
-# Note - ImageDataset will automatically infer the image directory structure
-# and labels should be in the right structure: foo/train/facades/ 01.png, foo/train/maps/01.png
-
-# ImageDataset comes from datasets.py
-
 dataloader = DataLoader(
-    ImageDataset(root = "experiments/data/%s" % opt.dataset_name,
+    ImageDataset(root = "data/%s" % opt.dataset_name,
         annots_csv = opt.annots_csv,
         transforms_=transforms_),
     batch_size=opt.batch_size,
@@ -314,7 +239,7 @@ dataloader = DataLoader(
 )
 
 test_dataloader = DataLoader(
-    ImageDataset(root = "experiments/data/%s" % opt.dataset_name,
+    ImageDataset(root = "data/%s" % opt.dataset_name,
         transforms_=transforms_,
         annots_csv = opt.annots_csv,
         mode="test"),
@@ -328,8 +253,7 @@ Tensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 FloatTensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 LongTensor = torch.cuda.LongTensor if cuda else torch.LongTensor
 
-# this generates output after training has nothing to do with dataloader
-
+# Generates a sample test image
 def sample_images(batches_done):
     """Saves a generated sample from the validation set
     currently set to go from A to B; visible to thermal """
@@ -349,22 +273,13 @@ def sample_images(batches_done):
 
 prev_time = time.time()
 
-f = open('experiments/pix2pix_mods_label_loss/{}.txt'.format(opt.out_file), 'a+') # Open for reading and writing.  The file is created if it does not exist
-
+f = open('favtGAN/{}.txt'.format(opt.out_file), 'a+')
 
 for epoch in range(opt.epoch, opt.n_epochs):
-    # for i, batch in enumerate(dataloader):
-
     for i, batch in enumerate(dataloader):
-
         real_A = Variable(batch["A"].type(Tensor))
         real_B = Variable(batch["B"].type(Tensor))
         labels = Variable(batch["LAB"].type(FloatTensor))
-
-        print("real_A from enumerate(dataloader):", real_A.size())
-        print("real_B from enumerate(dataloader):", real_B.size())
-        print("labels from enumerate(dataloader):", labels.size())
-        print("label here:", labels)
 
         # Adversarial ground truths
         valid_ones = Variable(Tensor(np.ones((real_A.size(0), *patch))), requires_grad=False)
@@ -377,47 +292,33 @@ for epoch in range(opt.epoch, opt.n_epochs):
         # ------------------
 
         print("+ + + optimizer_G.zero_grad() + + +")
-
         optimizer_G.zero_grad()
 
         # Gaussian noise
         z = Variable(FloatTensor(np.random.normal(0, 1, (opt.batch_size, opt.latent_dim, opt.img_height, opt.img_width)))) # [12, 3, 256, 256]
 
         allowable_labels_per_batch = 1
-
         fake_B = generator(real_A, labels, z)
-
         pred_fake, pred_label = discriminator(fake_B, real_A)
-
-        print("pred_label from Generator's fake_B:", pred_label)
-        print("real_label:", labels)
 
         print("====G losses calculating=========\n")
         # adversarial G loss
         loss_GAN = criterion_GAN(pred_fake, valid)
-        print("loss_GAN:", loss_GAN)
 
         if opt.batch_size > 1:
             labels = labels.type(torch.LongTensor)
             labels = labels.squeeze_()
             labels = labels.to(device='cuda')
-            #print("label is after squeeze():", labels.size())
         elif opt.batch_size ==1:
             labels = labels.type(torch.LongTensor)
             labels = labels.squeeze_(dim=0) # batch size must be torch.size[1] by 0 dim
             labels = labels.to(device='cuda')
-            #print("label is after squeeze():", labels.size())
-
+        # Aux loss
         label_loss = auxiliary_loss(pred_label, labels)
-        print("label_loss:", label_loss)
-
         # Pixel-wise loss
         loss_pixel = criterion_pixelwise(fake_B, real_B)
-        print("loss_pixel:", loss_pixel)
-
         # Total loss
         loss_G = 0.5 * (loss_GAN + label_loss + lambda_pixel * loss_pixel)
-        print("====TOTAL G:", loss_G)
 
         loss_G.backward()
 
@@ -429,7 +330,6 @@ for epoch in range(opt.epoch, opt.n_epochs):
         # ---------------------
 
         print("+ + + optimizer_D.zero_grad() + + +")
-
         optimizer_D.zero_grad()
 
         # Real loss:========
@@ -437,44 +337,31 @@ for epoch in range(opt.epoch, opt.n_epochs):
         labels = torch.unsqueeze(labels, 1) # return it back to its 2D tensor
         labels = labels.to(device='cuda')
 
+        # Real
         pred_real, real_aux = discriminator(real_B, real_A)
-        print("real_aux from Dreal:", real_aux)
-        print("real label:", labels)
-
-        # D_loss adversarial loss
+        # Adv real D loss
         loss_real = criterion_GAN(pred_real, valid)
 
         if opt.batch_size > 1:
             labels = labels.type(torch.LongTensor)
             labels = labels.squeeze_()
             labels = labels.to(device='cuda')
-            #print("label is after squeeze():", labels.size())
         elif opt.batch_size ==1:
             labels = labels.type(torch.LongTensor)
             labels = labels.squeeze_(dim=0) # batch size must be torch.size[1] by 0 dim
             labels = labels.to(device='cuda')
-            #print("label is after squeeze():", labels.size())
 
+        # Aux real D loss
         real_label_loss = auxiliary_loss(real_aux, labels)
-
-        # add the losses
-        #V3 uses a scaling factor since loss_real is MSE and real_label_loss is LOG LOSS
+        # Total real D loss
         d_real = loss_real + real_label_loss
 
-        print("=====d_real:", d_real)
-
-        # Fake loss:========
+        # Fake
         labels = labels.type(torch.FloatTensor) # need to return back to float for the Discriminator
         labels = torch.unsqueeze(labels, 1) # return it back to its 2D tensor
         labels = labels.to(device='cuda')
 
-        #print("gen labels going into discriminator(fake_B.detach(), real_A, gen_labels)", gen_labels)
-        #print("size:", gen_labels.size())
-
         pred_fake, fake_aux = discriminator(fake_B.detach(), real_A)
-        print("fake_aux from Dfake:", fake_aux)
-        print("real label:", labels)
-
         # D_fake adversarial loss
         loss_fake = criterion_GAN(pred_fake, fake)
 
@@ -483,22 +370,16 @@ for epoch in range(opt.epoch, opt.n_epochs):
             labels = labels.type(torch.LongTensor)
             labels = labels.squeeze_()
             labels = labels.to(device='cuda')
-            #print("label is after squeeze():", labels.size())
         elif opt.batch_size ==1:
             labels = labels.type(torch.LongTensor)
-            labels = labels.squeeze_(dim=0) # batch size must be torch.size[1] by 0 dim
-            labels = labels.to(device='cuda')
-            #print("label is after squeeze():", labels.size())
-
+            labels = labels.squeeze_(dim=0)
+        # Fake aux
         fake_label_loss = auxiliary_loss(fake_aux, labels)
-
+        # Total fake
         d_fake = loss_fake + fake_label_loss
-        print("====d_fake", d_fake)
 
-
-        #====== Total loss ====
+        # Total D loss
         loss_D = 0.5 * (d_real + d_fake)
-        print("====TOTAL D loss:", loss_D)
 
         loss_D.backward()
         optimizer_D.step()
@@ -565,7 +446,7 @@ for epoch in range(opt.epoch, opt.n_epochs):
 
     if opt.checkpoint_interval != -1 and epoch % opt.checkpoint_interval == 0:
         # Save model checkpoints
-        torch.save(generator.state_dict(), "experiments/pix2pix_mods_label_loss/saved_models/%s/generator_%d.pth" % (opt.experiment, epoch))
-        torch.save(discriminator.state_dict(), "experiments/pix2pix_mods_label_loss/saved_models/%s/discriminator_%d.pth" % (opt.experiment, epoch))
+        torch.save(generator.state_dict(), "favtGAN/saved_models/%s/generator_%d.pth" % (opt.experiment, epoch))
+        torch.save(discriminator.state_dict(), "favtGAN/saved_models/%s/discriminator_%d.pth" % (opt.experiment, epoch))
 
 f.close()
