@@ -64,7 +64,7 @@ favtGAN and pix2pix-generated thermal faces from the test sets of Eurecom and Ir
 <img src=./PP_iris_EI_sensor_V5_fakeB.png>
 
 ### IO FG-Baseline (0.686, 24.474)
-<img src=./PP_iris_io_sensor_V4_fakeB.png>
+<img src=./PP_iris_IO_sensor_V4_fakeB.png>
 
 ### IO FG-Noisy Labels (0.690, 24.797)
 <img src=./PP_iris_IO_updated_NL_fakeB.png>
